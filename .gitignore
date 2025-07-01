@@ -1,0 +1,12 @@
+# .gitignore
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+config_meme.yaml  # Exclude API keys
+ppo_model.zip     # Large model file
+bot_status.json   # Dynamic output
+*.env
+*.secret
