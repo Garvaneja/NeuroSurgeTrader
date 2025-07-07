@@ -69,20 +69,23 @@ class NeuroMemeSurge:
         self.positions = {asset: 0 for asset in self.assets}
         self.entry_prices = {asset: 0 for asset in self.assets}
         self.trade_log = []
-        self.status = "Stopped"
+        self.status = "Running"
         self.max_drawdown = 0.25
         self.max_position_size = 0.3
         self.min_order_sizes = {'SOLUSD': 0.1, 'DOGEUSD': 50.0, 'SHIBUSD': 500000.0}
         self.trade_frequency = timedelta(seconds=self.config['trade_frequency'])
         self.cad_usd_rate = 1.37
         self.fee_rate = 0.0026
-        
-        # Sync positions with Kraken balance
-        loop = asyncio.get_event_loop()
-        balance = loop.run_until_complete(self.trader.get_balance())
+
+    async def initialize(self):
+        # Sync positions and portfolio value with Kraken balance
+        balance = await self.trader.get_balance()
         self.positions['SOLUSD'] = float(balance.get('SOL', 0))
         self.positions['DOGEUSD'] = float(balance.get('XXDG', 0))
         self.positions['SHIBUSD'] = float(balance.get('SHIB', 0))
+        prices = await self._get_current_prices()
+        self.capital = float(balance.get('ZUSD', 0)) + float(balance.get('ZCAD', 0)) / self.cad_usd_rate
+        self.portfolio_value = self.capital + sum(self.positions[asset] * prices[asset] for asset in self.assets)
         
         self.data = self._fetch_initial_data()
         self.env = TradingEnv(self.data, self.assets, self.initial_capital)
@@ -127,6 +130,9 @@ class NeuroMemeSurge:
             logger.error(f"Error fetching price for {asset}: {e}")
             return 150.0 if asset == 'SOLUSD' else 0.15 if asset == 'DOGEUSD' else 0.000015
 
+    async def _get_current_prices(self) -> Dict[str, float]:
+        return {asset: await self._get_current_price(asset) for asset in self.assets}
+
     async def _check_funds(self, asset: str, quantity: float, price: float) -> bool:
         usd_cost = quantity * price * (1 + self.fee_rate)
         cad_cost = usd_cost * self.cad_usd_rate
@@ -151,13 +157,15 @@ class NeuroMemeSurge:
             cad_cost = usd_cost * self.cad_usd_rate
             if order_type == 'buy':
                 self.positions[asset] += quantity
-                self.capital -= cad_cost
+                self.capital -= usd_cost
                 self.entry_prices[asset] = price
             else:
                 self.positions[asset] -= quantity
-                self.capital += cad_cost
+                self.capital += usd_cost
             self.trade_log.append({"asset": asset, "type": order_type, "quantity": quantity, "price": price, "time": datetime.now().isoformat()})
             logger.info(f"Executed {order_type} {quantity} {asset} at ${price}")
+            prices = await self._get_current_prices()
+            self.portfolio_value = self.capital + sum(self.positions[asset] * prices[asset] for asset in self.assets)
 
     async def fetch_enhanced_data(self) -> pd.DataFrame:
         data = {}
@@ -185,9 +193,9 @@ class NeuroMemeSurge:
     async def execute_aggressive_trades(self, data: pd.DataFrame):
         if not await self.check_drawdown():
             return
-        prices = {asset: await self._get_current_price(asset) for asset in self.assets}
+        prices = await self._get_current_prices()
         momentum = self._calculate_momentum(data)
-        self.portfolio_value = sum(self.positions[asset] * prices[asset] for asset in self.assets) + self.capital
+        self.portfolio_value = self.capital + sum(self.positions[asset] * prices[asset] for asset in self.assets)
         observation = await self._create_observation(data, prices)
         
         if np.any(np.isnan(observation)) or np.any(np.isinf(observation)):
@@ -201,7 +209,7 @@ class NeuroMemeSurge:
             momentum_multiplier = 0.5 + min(max(momentum[asset], -0.5), 0.5) * 2
             quantity *= momentum_multiplier
             max_possible = min(quantity, self.max_position_size * self.portfolio_value / prices[asset])
-            max_possible = max(max_possible, self.min_order_sizes[asset])  # Enforce minimum order size
+            max_possible = max(max_possible, self.min_order_sizes[asset])
             
             if action_type > 0.3 and await self._check_funds(asset, max_possible, prices[asset]):
                 await self._execute_order(asset, max_possible, 'buy', prices[asset])
@@ -218,7 +226,10 @@ class NeuroMemeSurge:
 
     async def run(self):
         self.status = "Running"
+        self.save_status()
+        self.status = "Running"
         logger.info("Starting NeuroMemeSurge in AGGRESSIVE mode")
+        await self.initialize()
         while self.status == "Running":
             try:
                 data = await self.fetch_enhanced_data()

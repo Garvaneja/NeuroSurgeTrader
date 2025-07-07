@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quantum Trading Hub</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet" onerror="this.href='https://unpkg.com/tailwindcss@2.2.19/dist/tailwind.min.css'">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%2300f6ff' d='M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm0 2a6 6 0 1 1 0 12A6 6 0 0 1 8 2zm0 2a1 1 0 0 0-1 1v3H5a1 1 0 0 0 0 2h2v3a1 1 0 0 0 2 0v-3h2a1 1 0 0 0 0-2H9V5a1 1 0 0 0-1-1z'/%3E%3C/svg%3E">
+  <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios@1.7.2/dist/axios.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap');
+    body {
+      font-family: 'Orbitron', sans-serif;
+      background: url('https://images.unsplash.com/photo-1625246333195-78d9c38ad449') no-repeat center center fixed;
+      background-size: cover;
+      background-color: #0a0a1a;
+      color: #e0e0ff;
+    }
+    .circuit-bg {
+      background-image: linear-gradient(rgba(0, 10, 26, 0.9), rgba(0, 10, 26, 0.9));
+    }
+    .text-neon-blue {
+      color: #00f6ff;
+    }
+    .bg-neon-blue {
+      background-color: #00f6ff;
+    }
+    .error-text {
+      color: #ff4d4d;
+    }
+    .loading-spinner {
+      border: 4px solid #00f6ff;
+      border-top: 4px solid transparent;
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      animation: spin 1s linear infinite;
+      display: inline-block;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const App = () => {
+      const [activeTab, setActiveTab] = useState('dashboard');
+      const [portfolio, setPortfolio] = useState({});
+      const [historicalData, setHistoricalData] = useState({});
+      const [botStatus, setBotStatus] = useState('Unknown');
+      const [backtestResults, setBacktestResults] = useState(null);
+      const [error, setError] = useState('');
+      const [loading, setLoading] = useState(false);
+      const API_URL = 'http://127.0.0.1:8000/api';
+      const WS_URL = 'ws://127.0.0.1:8000/ws';
+
+      useEffect(() => {
+        setLoading(true);
+        axios.get(`${API_URL}/portfolio`)
+          .then(response => {
+            setPortfolio(response.data);
+            setError('');
+          })
+          .catch(error => {
+            console.error('Error fetching portfolio:', error);
+            setError('Failed to fetch portfolio data. Ensure backend is running on http://127.0.0.1:8000.');
+          })
+          .finally(() => setLoading(false));
+
+        const assets = ['SOLUSD', 'DOGEUSD', 'SHIBUSD'];
+        assets.forEach(asset => {
+          axios.get(`${API_URL}/historical-data/${asset}`)
+            .then(response => {
+              setHistoricalData(prev => ({ ...prev, [asset]: response.data }));
+              setError('');
+            })
+            .catch(error => {
+              console.error(`Error fetching data for ${asset}:`, error);
+              setError(`Failed to fetch data for ${asset}`);
+            });
+        });
+
+        const ws = new WebSocket(WS_URL);
+        ws.onmessage = (event) => {
+          const data = JSON.parse(event.data);
+          setBotStatus(data.status || 'Unknown');
+          setPortfolio(prev => ({ ...prev, ...data }));
+        };
+        ws.onerror = (error) => {
+          console.error('WebSocket error:', error);
+          setError('WebSocket connection failed. Ensure backend WebSocket is running.');
+        };
+        ws.onclose = () => {
+          console.log('WebSocket closed. Attempting to reconnect...');
+          setTimeout(() => {
+            const newWs = new WebSocket(WS_URL);
+            newWs.onmessage = ws.onmessage;
+            newWs.onerror = ws.onerror;
+            newWs.onclose = ws.onclose;
+          }, 5000);
+        };
+        return () => ws.close();
+      }, []);
+
+      useEffect(() => {
+        const ctx = document.getElementById('portfolioChart')?.getContext('2d');
+        if (!ctx || !historicalData['SOLUSD']?.length) {
+          console.warn('Chart not initialized: Missing canvas or data');
+          return;
+        }
+
+        const chart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: historicalData['SOLUSD'].map(d => new Date(d.time).toLocaleString()),
+            datasets: [
+              {
+                label: 'SOLUSD',
+                data: historicalData['SOLUSD'].map(d => d.close),
+                borderColor: '#00f6ff',
+                fill: false
+              },
+              historicalData['DOGEUSD']?.length && {
+                label: 'DOGEUSD',
+                data: historicalData['DOGEUSD'].map(d => d.close),
+                borderColor: '#ff00ff',
+                fill: false
+              },
+              historicalData['SHIBUSD']?.length && {
+                label: 'SHIBUSD',
+                data: historicalData['SHIBUSD'].map(d => d.close),
+                borderColor: '#00ff00',
+                fill: false
+              }
+            ].filter(Boolean)
+          },
+          options: {
+            responsive: true,
+            scales: { y: { beginAtZero: false } }
+          }
+        });
+
+        return () => chart.destroy();
+      }, [historicalData]);
+
+      const runBacktest = () => {
+        setLoading(true);
+        setError('');
+        const startDate = '2025-03-01T00:00:00Z';
+        const endDate = '2025-04-30T23:59:59Z';
+        axios.get(`${API_URL}/backtest?start_date=${startDate}&end_date=${endDate}`)
+          .then(response => {
+            setBacktestResults(response.data);
+            setError('');
+          })
+          .catch(error => {
+            console.error('Error running backtest:', error);
+            setError('Backtest failed. Check backend connection.');
+          })
+          .finally(() => setLoading(false));
+      };
+
+      const triggerTrade = () => {
+        setLoading(true);
+        setError('');
+        axios.post(`${API_URL}/trigger-trade`)
+          .then(response => {
+            setPortfolio(prev => ({ ...prev, last_trade: response.data.last_trade }));
+            setError('');
+          })
+          .catch(error => {
+            console.error('Error triggering trade:', error);
+            setError('Failed to trigger trade. Check backend.');
+          })
+          .finally(() => setLoading(false));
+      };
+
+      return (
+        <div className="min-h-screen circuit-bg">
+          <nav className="bg-gray-900 p-4 shadow-lg">
+            <div className="container mx-auto flex justify-between items-center">
+              <h1 className="text-2xl font-bold text-neon-blue">Quantum Trading Hub</h1>
+              <div className="space-x-4">
+                <button onClick={() => setActiveTab('dashboard')} className={`px-4 py-2 rounded ${activeTab === 'dashboard' ? 'bg-neon-blue text-gray-900' : 'text-gray-300 hover:text-neon-blue'}`}>Dashboard</button>
+                <button onClick={() => setActiveTab('backtest')} className={`px-4 py-2 rounded ${activeTab === 'backtest' ? 'bg-neon-blue text-gray-900' : 'text-gray-300 hover:text-neon-blue'}`}>Backtest</button>
+                <button onClick={() => setActiveTab('live')} className={`px-4 py-2 rounded ${activeTab === 'live' ? 'bg-neon-blue text-gray-900' : 'text-gray-300 hover:text-neon-blue'}`}>Live Trading</button>
+                <button onClick={() => setActiveTab('settings')} className={`px-4 py-2 rounded ${activeTab === 'settings' ? 'bg-neon-blue text-gray-900' : 'text-gray-300 hover:text-neon-blue'}`}>Settings</button>
+              </div>
+            </div>
+          </nav>
+          {error && <p className="text-center error-text mt-4">{error}</p>}
+          {loading && <div className="text-center mt-4"><span className="loading-spinner"></span> Loading...</div>}
+          <div className="container mx-auto flex mt-4">
+            <aside className="w-1/4 bg-gray-800 p-4 rounded-lg mr-4">
+              <h2 className="text-xl font-bold mb-4 text-neon-blue">Assets</h2>
+              <ul>
+                <li className="mb-2"><a href="#" className="text-neon-blue hover:underline">SOLUSD</a></li>
+                <li className="mb-2"><a href="#" className="text-neon-blue hover:underline">DOGEUSD</a></li>
+                <li className="mb-2"><a href="#" className="text-neon-blue hover:underline">SHIBUSD</a></li>
+              </ul>
+            </aside>
+            <main className="w-3/4 bg-gray-800 p-6 rounded-lg">
+              {activeTab === 'dashboard' && (
+                <div>
+                  <h2 className="text-2xl font-bold mb-4 text-neon-blue">Portfolio Dashboard</h2>
+                  <p>Portfolio Value: ${portfolio.portfolio_value ? portfolio.portfolio_value.toFixed(2) : 'N/A'}</p>
+                  <p>Bot Status: {botStatus}</p>
+                  <p>Last Trade: {portfolio.last_trade ? `${portfolio.last_trade.asset} ${portfolio.last_trade.type} at ${portfolio.last_trade.price}` : 'None'}</p>
+                  <p>Positions: SOLUSD: {portfolio.positions?.SOLUSD || '0'}, DOGEUSD: {portfolio.positions?.DOGEUSD || '0'}, SHIBUSD: {portfolio.positions?.SHIBUSD || '0'}</p>
+                  <canvas id="portfolioChart" className="mt-4" height="200"></canvas>
+                </div>
+              )}
+              {activeTab === 'backtest' && (
+                <div>
+                  <h2 className="text-2xl font-bold mb-4 text-neon-blue">Backtest Results</h2>
+                  <button onClick={runBacktest} className="bg-neon-blue text-gray-900 px-4 py-2 rounded mb-4 hover:bg-blue-500">Run Backtest</button>
+                  {backtestResults && (
+                    <div>
+                      <p>Initial Capital: ${backtestResults.initial_capital ? backtestResults.initial_capital.toFixed(2) : 'N/A'}</p>
+                      <p>Final Value: ${backtestResults.final_value ? backtestResults.final_value.toFixed(2) : 'N/A'}</p>
+                      <p>Return: {backtestResults.return ? (backtestResults.return * 100).toFixed(2) + '%' : 'N/A'}</p>
+                      <p>Sharpe Ratio: {backtestResults.sharpe ? backtestResults.sharpe.toFixed(2) : 'N/A'}</p>
+                      <p>Max Drawdown: {backtestResults.max_drawdown ? (backtestResults.max_drawdown * 100).toFixed(2) + '%' : 'N/A'}</p>
+                      <p>Trades: {backtestResults.trades || 'N/A'}</p>
+                      <p>Win Rate: {backtestResults.win_rate ? (backtestResults.win_rate * 100).toFixed(2) + '%' : 'N/A'}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+              {activeTab === 'live' && (
+                <div>
+                  <h2 className="text-2xl font-bold mb-4 text-neon-blue">Live Trading</h2>
+                  <p>Bot Status: {botStatus}</p>
+                  <button onClick={triggerTrade} className="bg-neon-blue text-gray-900 px-4 py-2 rounded mb-4 hover:bg-blue-500">Trigger Trade</button>
+                  <p>Monitor live trades here...</p>
+                </div>
+              )}
+              {activeTab === 'settings' && (
+                <div>
+                  <h2 className="text-2xl font-bold mb-4 text-neon-blue">Settings</h2>
+                  <p>Configure trading parameters...</p>
+                </div>
+              )}
+            </main>
+          </div>
+          <footer className="bg-gray-900 p-4 mt-4 text-center">
+            <p>Quantum Trading Hub © 2025 | Built by Crypto Rebels</p>
+            <a href="https://github.com/Garvaneja/NeuroMemeSurge" className="text-neon-blue hover:underline">GitHub</a>
+          </footer>
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>

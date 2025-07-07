@@ -1,0 +1,17 @@
+kraken:
+  api_key: "VCiZhBqaeNYCbOncCih+vEZiFbY3zgWSBmhN1Tngf0w51WKZF7jM4/84"
+  api_secret: "1MfU5HaddCWge9KOlOH7w9rkToZPQDrQb9d5VOFN+ekBLhV9ngZMPi0d1Pm1yijPVOVn+5Ah0gurpgZqcPU1Lg=="
+assets:
+  - SOLUSD
+  - DOGEUSD
+  - SHIBUSD
+capital: 400
+trade_frequency: 120
+ml:
+  lookback: 60
+  prediction_horizon: 1
+risk:
+  max_drawdown: 0.25
+  max_position_size: 0.95
+  volatility_threshold: 0.15
+leverage: 1.0
